@@ -1,4 +1,4 @@
-git+https://github.com/Mega-333-Evolutions/Astra-Userbot.git
+git+https://github.com/paman7647/Astra.git@dev
 python-dotenv>=1.0.1
 google-genai>=0.3.0
 aiohttp>=3.11.0
