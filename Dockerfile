@@ -1,12 +1,13 @@
-
 FROM python:3.14-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    NODE_VERSION=20 \
+    NODE_VERSION=22 \
     PIP_NO_CACHE_DIR=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
+# git is required: requirements.txt installs Astra from GitHub (git+https://...)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
     curl \
     gnupg \
     ffmpeg \
@@ -37,10 +38,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xdg-utils \
     && curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g npm@latest \
-    && wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
-    && apt-get install -y ./google-chrome-stable_current_amd64.deb || true \
-    && rm -f google-chrome-stable_current_amd64.deb \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -51,7 +48,9 @@ RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir yt-dlp
 
-RUN playwright install chrome || playwright install chromium
+# Astra launches Playwright's bundled Chromium, so install that plus its system libs
+RUN python -m playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY . .
 
