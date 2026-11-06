@@ -3,6 +3,7 @@ Astra Userbot — Main Entry Point
 """
 
 import asyncio
+import hmac
 import logging
 import os
 import random
@@ -13,7 +14,7 @@ import time
 from typing import *
 
 import requests
-from flask import Flask
+from flask import Flask, Response, request
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -80,11 +81,14 @@ def patch_authenticator(client_instance):
 
 
 # --- Client ---
-client = Client(
+_client_kwargs = dict(
     session_id=os.getenv("ASTRA_SESSION_ID", "X"),
     phone=os.getenv("PHONE_NUMBER") or os.getenv("BOT_OWNER_ID"),
     headless=os.getenv("ASTRA_HEADLESS", "True").lower() == "true",
 )
+if os.getenv("ASTRA_DEBUG", "").lower() == "true":
+    _client_kwargs["log_level"] = logging.DEBUG  # verbose engine logs
+client = Client(**_client_kwargs)
 patch_authenticator(client)
 
 
@@ -94,6 +98,44 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     return {"status": "Astra live", "version": config.VERSION}
+
+# --- Temporary debug page (disabled unless the DEBUG_TOKEN env var is set) ---
+MAIN_LOOP = None
+DEBUG_TOKEN = os.getenv("DEBUG_TOKEN", "").strip()
+
+
+def _debug_allowed() -> bool:
+    key = request.args.get("key", "")
+    return bool(DEBUG_TOKEN) and hmac.compare_digest(key.encode(), DEBUG_TOKEN.encode())
+
+
+@app.route("/debug")
+def debug_view():
+    """Self-refreshing screenshot of the headless browser: /debug?key=<DEBUG_TOKEN>"""
+    if not _debug_allowed():
+        return Response("Not found", status=404)
+    html = (
+        '<meta http-equiv="refresh" content="10">'
+        '<body style="margin:0;background:#111">'
+        f'<img src="/debug/screenshot?key={DEBUG_TOKEN}" style="max-width:100%">'
+    )
+    return Response(html, mimetype="text/html", headers={"Cache-Control": "no-store"})
+
+
+@app.route("/debug/screenshot")
+def debug_screenshot():
+    if not _debug_allowed():
+        return Response("Not found", status=404)
+    if MAIN_LOOP is None:
+        return Response("Event loop not ready yet", status=503, mimetype="text/plain")
+    try:
+        page = client.browser.page
+        fut = asyncio.run_coroutine_threadsafe(page.screenshot(type="jpeg", quality=70), MAIN_LOOP)
+        return Response(fut.result(timeout=30), mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+    except Exception as e:
+        names = ", ".join(sorted(n for n in dir(client) if not n.startswith("__")))
+        return Response(f"Screenshot failed: {e!r}\nclient attributes: {names}", status=500, mimetype="text/plain")
+
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -169,7 +211,9 @@ async def shutdown(sig: Optional[signal.Signals] = None):
 
 
 async def main():
+    global MAIN_LOOP
     loop = asyncio.get_running_loop()
+    MAIN_LOOP = loop
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(s)))
 
